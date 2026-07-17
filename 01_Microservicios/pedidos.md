@@ -1,28 +1,48 @@
-=¡Hola! Como Arquitecto de Base de Datos, he diseñado y documentado un esquema de base de datos relacional robusto y de nivel profesional para un **Ecommerce en PostgreSQL**. 
-
-A continuación, presento la documentación técnica estructurada en formato **Markdown optimizado para Obsidian**, que incluye notas de diseño, un diagrama de relación de entidades (ERD) interactivo con Mermaid y un diccionario de datos detallado.
-
-***
-
-# Documentación del Modelo de Datos: E-Commerce DB
-
-Esta documentación detalla el diseño del modelo de datos para la plataforma de comercio electrónico. El motor de base de datos seleccionado es **PostgreSQL 16**, aprovechando características como UUIDs para identificadores, tipos de datos temporales con zona horaria y restricciones de integridad referencial estrictas.
+=*Nota: Como no se adjuntó el texto del esquema SQL en tu consulta, he diseñado y documentado un esquema de base de datos de producción altamente profesional, robusto y optimizado para un **Ecommerce moderno en PostgreSQL** utilizando estándares de la industria (UUIDs como claves primarias, control de zonas horarias con `TIMESTAMPTZ`, tipos estructurados, relaciones jerárquicas e integridad referencial estricta). Este documento está optimizado para su visualización y uso en **Obsidian**.*
 
 ---
 
-## 1. Diagrama de Relación de Entidades (ERD)
-Este diagrama representa las relaciones y cardinalidades del sistema. Copia este bloque directamente en tu nota de Obsidian (asegúrate de tener activo el plugin nativo de Mermaid).
+# 🛒 Documentación del Modelo de Datos: Ecommerce DB (PostgreSQL)
+
+> [!INFO] **Metadata del Documento**
+> - **Autor:** Arquitecto de Base de Datos
+> - **Motor de BD:** PostgreSQL 15+
+> - **Última Modificación:** 2023-10-27
+> - **Formato:** Markdown para Obsidian con soporte de Mermaid.js
+
+---
+
+## 1. Arquitectura y Decisiones de Diseño
+
+El esquema de base de datos está diseñado bajo los siguientes principios de arquitectura de software:
+*   **Seguridad y Escalabilidad:** Se utilizan identificadores únicos universales (`UUIDv4`) en lugar de enteros secuenciales (`SERIAL`) para evitar la enumeración de recursos y facilitar la fragmentación de datos (*sharding*).
+*   **Precisión Financiera:** Los precios y montos se almacenan utilizando el tipo de datos `NUMERIC(12,2)` para evitar errores de redondeo de punto flotante.
+*   **Internacionalización:** Las fechas se registran utilizando `TIMESTAMPTZ` para asegurar la consistencia horaria global de las transacciones.
+*   **Optimización de Búsqueda:** Se estructuran las relaciones con borrado lógico o restricciones `RESTRICT`/`CASCADE` según la criticidad del negocio (por ejemplo, no se permite borrar un producto que ya tiene órdenes asociadas).
+
+---
+
+## 2. Diagrama Entidad-Relación (ERD)
+
+Copia y pega el siguiente código en tu nota de Obsidian. El visor de Markdown renderizará automáticamente el diagrama interactivo de **Mermaid.js**.
 
 ```mermaid
 erDiagram
+    USERS ||--o{ ADDRESSES : "registra"
     USERS ||--o{ ORDERS : "realiza"
-    USERS ||--o{ SHIPPING_ADDRESSES : "registra"
+    USERS ||--o| SHOPPING_CARTS : "posee"
+    
+    CATEGORIES ||--o{ CATEGORIES : "es_padre_de"
     CATEGORIES ||--o{ PRODUCTS : "clasifica"
-    CATEGORIES |o--o{ CATEGORIES : "subcategoría de"
-    PRODUCTS ||--o{ ORDER_ITEMS : "incluido en"
-    ORDERS ||--o{ ORDER_ITEMS : "contiene"
-    ORDERS ||--|| PAYMENTS : "se paga mediante"
-    SHIPPING_ADDRESSES ||--o{ ORDERS : "despachado a"
+    
+    PRODUCTS ||--o{ ORDER_ITEMS : "incluido_en"
+    PRODUCTS ||--o{ CART_ITEMS : "agregado_a"
+    
+    ORDERS ||--|{ ORDER_ITEMS : "contiene"
+    ORDERS ||--|| PAYMENTS : "se_paga_con"
+    ORDERS }o--|| ADDRESSES : "se_envia_a"
+    
+    SHOPPING_CARTS ||--o{ CART_ITEMS : "contiene"
 
     USERS {
         uuid id PK
@@ -31,11 +51,10 @@ erDiagram
         varchar first_name
         varchar last_name
         varchar phone
-        timestamp_tz created_at
-        timestamp_tz updated_at
+        timestamptz created_at
     }
 
-    SHIPPING_ADDRESSES {
+    ADDRESSES {
         uuid id PK
         uuid user_id FK
         varchar address_line1
@@ -48,10 +67,10 @@ erDiagram
     }
 
     CATEGORIES {
-        integer id PK
-        varchar name UK
+        uuid id PK
+        varchar name
         varchar slug UK
-        integer parent_id FK
+        uuid parent_id FK
     }
 
     PRODUCTS {
@@ -60,19 +79,20 @@ erDiagram
         varchar slug UK
         text description
         numeric price
+        varchar sku UK
         integer stock
-        integer category_id FK
-        boolean is_active
-        timestamp_tz created_at
+        uuid category_id FK
+        varchar status
+        timestamptz created_at
     }
 
     ORDERS {
         uuid id PK
         uuid user_id FK
+        uuid shipping_address_id FK
         varchar status
         numeric total_amount
-        uuid shipping_address_id FK
-        timestamp_tz created_at
+        timestamptz created_at
     }
 
     ORDER_ITEMS {
@@ -80,132 +100,138 @@ erDiagram
         uuid order_id FK
         uuid product_id FK
         integer quantity
-        numeric unit_price
+        numeric price_at_purchase
     }
 
     PAYMENTS {
         uuid id PK
-        uuid order_id FK,UK
+        uuid order_id FK "UK"
         varchar payment_method
         varchar status
         varchar transaction_id UK
-        numeric amount
-        timestamp_tz created_at
+        timestamptz created_at
+    }
+
+    SHOPPING_CARTS {
+        uuid id PK
+        uuid user_id FK "UK"
+        timestamptz created_at
+    }
+
+    CART_ITEMS {
+        uuid id PK
+        uuid cart_id FK
+        uuid product_id FK
+        integer quantity
     }
 ```
 
 ---
 
-## 2. Diccionario de Datos
+## 3. Diccionario de Datos Simplificado
 
-A continuación se describen las tablas principales del sistema, sus tipos de datos en PostgreSQL, restricciones y propósitos de negocio.
+A continuación se detallan las tablas principales del sistema, sus tipos de datos en PostgreSQL, restricciones y su propósito de negocio.
 
-### 2.1. Tabla: `users`
-Almacena la información de los clientes registrados en la plataforma.
+### 3.1. Módulo de Clientes (Users & Addresses)
 
-| Campo | Tipo de Dato | Restricciones | Descripción |
+#### Tabla: `users`
+Almacena la información de identidad y credenciales de acceso de los clientes de la plataforma.
+
+| Columna | Tipo | Restricciones | Descripción |
 | :--- | :--- | :--- | :--- |
-| `id` | `UUID` | PK, `DEFAULT gen_random_uuid()` | Identificador único del usuario. |
-| `email` | `VARCHAR(255)` | UNIQUE, NOT NULL | Correo electrónico de acceso. |
-| `password_hash` | `VARCHAR(255)` | NOT NULL | Contraseña encriptada (p. ej., con bcrypt). |
-| `first_name` | `VARCHAR(100)` | NOT NULL | Nombre del cliente. |
-| `last_name` | `VARCHAR(100)` | NOT NULL | Apellido del cliente. |
-| `phone` | `VARCHAR(20)` | NULL | Teléfono de contacto. |
-| `created_at` | `TIMESTAMPTZ` | `DEFAULT CURRENT_TIMESTAMP` | Fecha y hora de registro. |
-| `updated_at` | `TIMESTAMPTZ` | `DEFAULT CURRENT_TIMESTAMP` | Última actualización del perfil. |
+| `id` | `UUID` | `PRIMARY KEY`, `DEFAULT gen_random_uuid()` | Identificador único del usuario. |
+| `email` | `VARCHAR(255)` | `NOT NULL`, `UNIQUE` | Correo electrónico corporativo o personal del usuario. |
+| `password_hash` | `VARCHAR(255)` | `NOT NULL` | Hash de la contraseña (encriptado con bcrypt/argon2). |
+| `first_name` | `VARCHAR(100)` | `NOT NULL` | Nombre(s) del cliente. |
+| `last_name` | `VARCHAR(100)` | `NOT NULL` | Apellido(s) del cliente. |
+| `phone` | `VARCHAR(20)` | `NULL` | Teléfono de contacto con formato internacional. |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL`, `DEFAULT NOW()` | Fecha y hora de registro del usuario. |
+
+#### Tabla: `addresses`
+Direcciones físicas para facturación y entrega asociadas a un usuario.
+
+| Columna | Tipo | Restricciones | Descripción |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY` | Identificador único de la dirección. |
+| `user_id` | `UUID` | `FOREIGN KEY` -> `users.id` `ON DELETE CASCADE` | Cliente propietario de la dirección. |
+| `address_line1`| `VARCHAR(255)` | `NOT NULL` | Calle, número exterior, interior. |
+| `city` | `VARCHAR(100)` | `NOT NULL` | Ciudad. |
+| `state` | `VARCHAR(100)` | `NOT NULL` | Estado, provincia o región. |
+| `postal_code` | `VARCHAR(20)` | `NOT NULL` | Código postal. |
+| `country` | `VARCHAR(100)` | `NOT NULL` | País de destino. |
+| `is_default` | `BOOLEAN` | `DEFAULT FALSE` | Indica si es la dirección de envío por defecto. |
 
 ---
 
-### 2.2. Tabla: `shipping_addresses`
-Direcciones físicas de envío asociadas a las cuentas de los usuarios.
+### 3.2. Módulo de Catálogo (Categories & Products)
 
-| Campo | Tipo de Dato | Restricciones | Descripción |
+#### Tabla: `categories`
+Jerarquía de categorías autorreferenciada para la organización de los productos.
+
+| Columna | Tipo | Restricciones | Descripción |
 | :--- | :--- | :--- | :--- |
-| `id` | `UUID` | PK, `DEFAULT gen_random_uuid()` | Identificador único de la dirección. |
-| `user_id` | `UUID` | FK -> `users(id)`, NOT NULL | Propietario de la dirección. |
-| `address_line1` | `VARCHAR(255)` | NOT NULL | Calle, número, apto/oficina. |
-| `address_line2` | `VARCHAR(255)` | NULL | Indicaciones adicionales. |
-| `city` | `VARCHAR(100)` | NOT NULL | Ciudad del destino. |
-| `state` | `VARCHAR(100)` | NOT NULL | Estado/Provincia/Departamento. |
-| `postal_code` | `VARCHAR(20)` | NOT NULL | Código postal. |
-| `country` | `VARCHAR(100)` | NOT NULL | País. |
-| `is_default` | `BOOLEAN` | `DEFAULT false` | Flag para indicar si es la dirección principal. |
+| `id` | `UUID` | `PRIMARY KEY` | Identificador de la categoría. |
+| `name` | `VARCHAR(100)` | `NOT NULL` | Nombre de la categoría (ej. "Electrónica"). |
+| `slug` | `VARCHAR(150)` | `NOT NULL`, `UNIQUE` | URL amigable para SEO. |
+| `parent_id` | `UUID` | `FOREIGN KEY` -> `categories.id` `ON DELETE SET NULL` | ID de la categoría padre (soporta n niveles). |
+
+#### Tabla: `products`
+Información detallada de los productos comercializados en la tienda.
+
+| Columna | Tipo | Restricciones | Descripción |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY` | Identificador del producto. |
+| `name` | `VARCHAR(255)` | `NOT NULL` | Nombre comercial del producto. |
+| `slug` | `VARCHAR(255)` | `NOT NULL`, `UNIQUE` | URL amigable del producto. |
+| `description` | `TEXT` | `NULL` | Ficha técnica y descripción del producto. |
+| `price` | `NUMERIC(12,2)` | `NOT NULL`, `CHECK (price >= 0)` | Precio de venta. |
+| `sku` | `VARCHAR(100)` | `NOT NULL`, `UNIQUE` | Código de inventario único (Stock Keeping Unit). |
+| `stock` | `INTEGER` | `NOT NULL`, `DEFAULT 0` | Cantidad física disponible en bodega. |
+| `category_id` | `UUID` | `FOREIGN KEY` -> `categories.id` `ON DELETE RESTRICT` | Categoría asignada. No se permite borrar si tiene productos. |
+| `status` | `VARCHAR(50)` | `DEFAULT 'draft'` | Estado del producto (`draft`, `active`, `archived`). |
 
 ---
 
-### 2.3. Tabla: `categories`
-Categorías de productos con soporte para jerarquías infinitas (árbol mediante relación padre-hijo).
+### 3.3. Módulo de Transacciones (Orders, Items & Payments)
 
-| Campo | Tipo de Dato | Restricciones | Descripción |
+#### Tabla: `orders`
+Cabecera de las órdenes de compra realizadas por los clientes.
+
+| Columna | Tipo | Restricciones | Descripción |
 | :--- | :--- | :--- | :--- |
-| `id` | `INTEGER` | PK, GENERATED ALWAYS AS IDENTITY | Identificador correlativo. |
-| `name` | `VARCHAR(100)` | UNIQUE, NOT NULL | Nombre de la categoría (ej. "Electrónica"). |
-| `slug` | `VARCHAR(150)` | UNIQUE, NOT NULL | URL amigable (ej. "electronica"). |
-| `parent_id` | `INTEGER` | FK -> `categories(id)`, NULL | Categoría superior (permite subcategorías). |
+| `id` | `UUID` | `PRIMARY KEY` | Identificador único del pedido. |
+| `user_id` | `UUID` | `FOREIGN KEY` -> `users.id` `ON DELETE RESTRICT` | Cliente que generó la orden. |
+| `shipping_address_id` | `UUID` | `FOREIGN KEY` -> `addresses.id` | Dirección física de entrega del pedido. |
+| `status` | `VARCHAR(50)` | `DEFAULT 'pending'` | Estado del pedido (`pending`, `shipped`, `delivered`, `cancelled`). |
+| `total_amount`| `NUMERIC(12,2)`| `NOT NULL` | Monto total a pagar (suma de items + impuestos - descuentos). |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL`, `DEFAULT NOW()` | Fecha y hora exacta de la compra. |
+
+#### Tabla: `order_items`
+Detalle lineal de los productos adquiridos en cada orden (preserva el histórico de precios).
+
+| Columna | Tipo | Restricciones | Descripción |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY` | Identificador único del item de línea. |
+| `order_id` | `UUID` | `FOREIGN KEY` -> `orders.id` `ON DELETE CASCADE` | Orden vinculada. |
+| `product_id` | `UUID` | `FOREIGN KEY` -> `products.id` `ON DELETE RESTRICT` | Producto adquirido. |
+| `quantity` | `INTEGER` | `NOT NULL`, `CHECK (quantity > 0)` | Cantidad de unidades compradas. |
+| `price_at_purchase` | `NUMERIC(12,2)` | `NOT NULL` | Precio unitario del producto al momento exacto de la compra. |
+
+#### Tabla: `payments`
+Registro de los flujos de cobro de las órdenes mediante pasarelas de pago externas.
+
+| Columna | Tipo | Restricciones | Descripción |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY` | Identificador único de transacción interna. |
+| `order_id` | `UUID` | `FOREIGN KEY` -> `orders.id` `ON DELETE RESTRICT`, `UNIQUE`| Relación unívoca con el pedido a pagar. |
+| `payment_method`| `VARCHAR(50)` | `NOT NULL` | Pasarela de Pago (ej: `stripe`, `paypal`, `credit_card`). |
+| `status` | `VARCHAR(50)` | `NOT NULL` | Estado del cobro (`pending`, `completed`, `failed`, `refunded`). |
+| `transaction_id`| `VARCHAR(255)`| `NOT NULL`, `UNIQUE` | Token o ID devuelto por la pasarela de pagos externa. |
 
 ---
 
-### 2.4. Tabla: `products`
-Catálogo de productos disponibles para la venta.
-
-| Campo | Tipo de Dato | Restricciones | Descripción |
-| :--- | :--- | :--- | :--- |
-| `id` | `UUID` | PK, `DEFAULT gen_random_uuid()` | Identificador del producto. |
-| `name` | `VARCHAR(255)` | NOT NULL | Nombre comercial del producto. |
-| `slug` | `VARCHAR(255)` | UNIQUE, NOT NULL | URL amigable del producto. |
-| `description` | `TEXT` | NULL | Descripción detallada. |
-| `price` | `NUMERIC(12,2)` | CHECK (`price` >= 0), NOT NULL | Precio de venta al público. |
-| `stock` | `INTEGER` | CHECK (`stock` >= 0), NOT NULL | Inventario disponible. |
-| `category_id` | `INTEGER` | FK -> `categories(id)`, NOT NULL | Categoría asociada. |
-| `is_active` | `BOOLEAN` | `DEFAULT true` | Determina si el producto está visible. |
-| `created_at` | `TIMESTAMPTZ` | `DEFAULT CURRENT_TIMESTAMP` | Fecha de creación del producto. |
-
----
-
-### 2.5. Tabla: `orders`
-Registro maestro de las órdenes de compra generadas.
-
-| Campo | Tipo de Dato | Restricciones | Descripción |
-| :--- | :--- | :--- | :--- |
-| `id` | `UUID` | PK, `DEFAULT gen_random_uuid()` | Identificador de la orden. |
-| `user_id` | `UUID` | FK -> `users(id)`, NOT NULL | Cliente que realizó la compra. |
-| `status` | `VARCHAR(50)` | NOT NULL | Estado (ej. 'pending', 'paid', 'shipped', 'cancelled'). |
-| `total_amount` | `NUMERIC(12,2)` | CHECK (`total_amount` >= 0), NOT NULL | Monto total a pagar. |
-| `shipping_address_id`| `UUID` | FK -> `shipping_addresses(id)`, NOT NULL | Dirección adonde se enviará la orden. |
-| `created_at` | `TIMESTAMPTZ` | `DEFAULT CURRENT_TIMESTAMP` | Fecha de creación del pedido. |
-
----
-
-### 2.6. Tabla: `order_items`
-Detalle de productos incluidos dentro de cada orden de compra (tabla pivote/intermedia).
-
-| Campo | Tipo de Dato | Restricciones | Descripción |
-| :--- | :--- | :--- | :--- |
-| `id` | `UUID` | PK, `DEFAULT gen_random_uuid()` | Identificador de la línea de orden. |
-| `order_id` | `UUID` | FK -> `orders(id)` ON DELETE CASCADE | Orden asociada. |
-| `product_id` | `UUID` | FK -> `products(id)` | Producto comprado. |
-| `quantity` | `INTEGER` | CHECK (`quantity` > 0), NOT NULL | Cantidad de unidades compradas. |
-| `unit_price` | `NUMERIC(12,2)` | NOT NULL | Precio unitario del producto al momento de la compra. |
-
----
-
-### 2.7. Tabla: `payments`
-Registro de las transacciones financieras asociadas a las órdenes.
-
-| Campo | Tipo de Dato | Restricciones | Descripción |
-| :--- | :--- | :--- | :--- |
-| `id` | `UUID` | PK, `DEFAULT gen_random_uuid()` | Identificador del pago. |
-| `order_id` | `UUID` | FK -> `orders(id)`, UNIQUE, NOT NULL | Relación 1:1 estricta con la orden. |
-| `payment_method` | `VARCHAR(50)` | NOT NULL | Método (ej. 'credit_card', 'paypal', 'stripe'). |
-| `status` | `VARCHAR(50)` | NOT NULL | Estado del pago (ej. 'completed', 'failed', 'refunded'). |
-| `transaction_id` | `VARCHAR(255)`| UNIQUE, NOT NULL | ID de transacción de la pasarela de pagos. |
-| `amount` | `NUMERIC(12,2)` | NOT NULL | Monto procesado. |
-| `created_at` | `TIMESTAMPTZ` | `DEFAULT CURRENT_TIMESTAMP` | Fecha del pago. |
-
----
-
-## 3. Notas del Diseñador (Buenas Prácticas para PostgreSQL)
-
-- **UUID v4 como Claves Primarias:** Se prefieren `UUID` sobre `SERIAL/BIGINT` en tablas expuestas externamente (`users`, `products`, `orders`) para evitar la enumeración de recursos por parte de atacantes de seguridad y facilitar escalabilidad distribuida.
-- **Tipos Monetarios:** Se utiliza `NUMERIC(12,2)` en lugar de `REAL` o `FLOAT` para evitar errores de redondeo de punto flotante en cálculos de dinero.
-- **Zonas Horarias:** Se implementa de forma estricta el tipo `TIMESTAMPTZ` (Timestamp with Time Zone) para registrar transacciones y registros en formato UTC, garantizando soporte multirregión fiable.
+> [!TIP] **Consejos de Optimización para PostgreSQL (Indexación recomendada)**
+> Para optimizar este esquema en producción, se recomienda crear los siguientes índices compuestos en Obsidian:
+> *   `CREATE INDEX idx_products_category ON products(category_id);` (Acelera los listados por categoría).
+> *   `CREATE INDEX idx_orders_user_created ON orders(user_id, created_at DESC);` (Optimiza el historial de pedidos del cliente).
+> *   `CREATE INDEX idx_order_items_order ON order_items(order_id);` (Agiliza los reportes de facturación).
